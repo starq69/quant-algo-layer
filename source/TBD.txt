@@ -1,0 +1,8 @@
+vedere :
+
+"Database-style DataFrame joining/merging"
+
+su : https://pandas.pydata.org/pandas-docs/stable/merging.html
+
+
+
