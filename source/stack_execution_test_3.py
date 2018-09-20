@@ -5,6 +5,7 @@
 import numpy as np
 import pandas as pd
 import time
+from collections import OrderedDict
 
 _HIGH_ = 'High'
 dty = {   
@@ -35,31 +36,32 @@ pdf_ext_data_columns = {
                         '3' : 'foo'
                         }
 
-#
-# events normalization:
-#
+_ext_data_columns = ['Date', 'foo', 'LW-min', 'LW-max', 'GAP']
+
+
 def yeld_events_row (events):
 
-    events_row = {}
+    events_row = OrderedDict() 
 
     if not events:
-        for key in pdf_ext_data_columns:
-            events_row [pdf_ext_data_columns[key]] = None
+        print('YELD EVENT ROW : NOT EVENTS')
+        for key in _ext_data_columns:
+            events_row [key] = None
         return events_row
 
-    for key in pdf_ext_data_columns:
+    # crea l'event_dict (events_row) x il datapoint corrente
+    #
+    for key in _ext_data_columns:
 
-        #
-        # crea l'event_dict (events_row) x il datapoint corrente
-        #
+        print('KEY FIELD is : ' + str(key))
         try:
-            if events[pdf_ext_data_columns[key]]:
-                events_row [pdf_ext_data_columns[key]] = events[pdf_ext_data_columns[key]]
+            if events [key]:
+                events_row [key] = events [key]
             else:
-                events_row [pdf_ext_data_columns[key]] = None
+                events_row [key] = None
 
         except KeyError as e:
-            events_row [pdf_ext_data_columns[key]] = None 
+            events_row [key] = None 
 
     return events_row
 
@@ -73,13 +75,13 @@ def execution_pool (active_indicators, dtype=dty, ext_data={}):
     period = max_duration
     count  = 1
     
-    def _run(pdf): ### può essere un rif a pdf
+    def _run(pdf, index): ### può essere un rif a pdf
 
         nonlocal ai, period, count, ext_data
-        count += 1
+        #count += 1
         
         v = None
-        events = {}
+        events = {'Date' : index}
         
         for fx in ai:
             
@@ -92,6 +94,7 @@ def execution_pool (active_indicators, dtype=dty, ext_data={}):
         if count >= period: 
             pass
 
+        count += 1
         return events
         
     return _run
@@ -110,50 +113,56 @@ def main():
     print(pdf.info(memory_usage='deep'))
 
     rows = 0
-    events_rows = dict()
+    #events_rows = dict()
+    events_rows = OrderedDict()
     #start = time.clock()
 
     for datapoint in pdf.itertuples():
 
-        print ('datapoint ..........: ' + str(datapoint.Index))
-
         if rows :
-            events = run_step(pdf)      ### timestamp come idx ?
+            events = run_step(pdf, datapoint.Index)      ### timestamp come idx ?
+            print ('main loop : events after calling run_step() are : [' + str(events) + ']')
 
             if events:
-                #events_dict = yeld_events_row(run_step(pdf, datapoint.Index)) ## new
+                print('main loop : events FOUND')
                 events_dict = yeld_events_row(events)
+                print ('main loop : events_dict after calling yeld(events) : ' + str(events_dict))
 
             else:
+                print('main loop : events NOT FOUND')
                 events_dict = yeld_events_row({})
+                print ('main loop : events_dict after calling yeld(events) : ' + str(events_dict))
 
             for k, v in events_dict.items():
                 events_rows.setdefault(k, []).append(v)
         else:
             run_step = execution_pool(ai)  
 
-            events_dict = yeld_events_row({})
+            events = run_step(pdf, datapoint.Index)
+            events_dict = yeld_events_row(events)
+
+            #events_dict = yeld_events_row({}) ###
+
+            print('main loop : events_dict FIRST ROW is : ' + str(events_dict))
 
             for k, v in events_dict.items():
                 events_rows.setdefault(k, []).append(v)
 
         rows += 1
 
-    columns =  list(pdf_ext_data_columns.values())
-    print('events_rows....')
-    print(str(events_rows))
+    print('events_rows is : ' + str(events_rows))
 
-    #print('pdf index size : ' + str(len(pdf.index)))
     #pdf.insert(loc=0, column=columns, value=events_rows)
 
     ext_pdf = pd.DataFrame(events_rows)
     print(ext_pdf)
+    pdf = pdf.join(ext_pdf.set_index('Date'))
 
-    pdf = pdf.join(ext_pdf)
-    #pdf = pdf.join(pd.DataFrame(events_rows))
-    #pdf = pd.concat([pdf, pd.DataFrame(events_rows.values()).T], ignore_index=True, axis=1)
     print(pdf.head())
+    print(pdf.tail())
     print(pdf.info(memory_usage='deep'))
+
+    pdf.to_csv('stack_execution.csv')
 
 
 if __name__ == '__main__':
