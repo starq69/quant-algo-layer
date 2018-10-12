@@ -48,24 +48,29 @@ def yeld_events_row (events, features_columns):   # feature_columns
     return events_row
 
 
-def execution_pool (active_indicators, dtype=dty, ext_data={}):
+def execution_pool (active_indicators, compact=False, dtype=dty, ext_data={}):
     
     ai           = active_indicators 
-    max_duration = max({_:value['frequency'] for (_,value) in ai.items()}.values())
+    #max_duration = max({_:value['frequency'] for (_,value) in ai.items()}.values())
     ext_data     = ext_data
 
-    def _attach_callback():
+    def _attach_callback(compact):
 
-        for k, param in ai.items():
-            #print('k={},    v={}'.format(str(k), str(v)))
-            if 'callback_function' in param:
-                param['callback'] = functions._mapping[param['callback_function']]
-                #print('k={},    v={}'.format(str(k), str(param)))
-                #print('callback : {}'.format(param['callback']))
-            else:
-                pass
-                #print('NO callback function found for item {} ==> item discarded')
-                # tbd del(k)
+        if compact:
+            for _function, _istances in ai.items():
+                for _istance in _istances:
+                    _istance['callback'] = functions._mapping[_function]
+
+        else:
+            for k, param in ai.items():
+                #print('k={},    v={}'.format(str(k), str(v)))
+                if 'callback_function' in param:
+                    param['callback'] = functions._mapping[param['callback_function']]
+                    #print('k={},    v={}'.format(str(k), str(param)))
+                    #print('callback : {}'.format(param['callback']))
+                else:
+                    print('NO callback function found for item {} ==> item discarded')
+                    # tbd del(k)
 
     
     def _run(pdf, index): ### può essere un rif a pdf
@@ -83,51 +88,115 @@ def execution_pool (active_indicators, dtype=dty, ext_data={}):
             if sup >= param ['frequency'] :
 
                 try: 
-                    v = param['callback'] (fx, pdf.iloc [inf : sup ]) ### ultimi fx['frequency'] elementi
+                    v = param['callback'] (fx, pdf.iloc [inf : sup ]) 
 
                 except KeyError as e:
                     print('KEY ERROR : {}'.format(e))
                     continue
 
                 events.update(v)
-                
         return events
-        
-    _attach_callback() 
 
-    return _run
+
+    def _run_compact(pdf, index):
+
+        nonlocal ai
+        v = None
+        events = {'Date' : index}
+
+        sup = pdf.index.get_loc(index) + 1
+
+        for fx, _istances in ai.items():
+            for _istance in _istances:
+                inf = sup - _istance['frequency'] 
+                if sup >= _istance['frequency']:
+                    try: 
+                        v = _istance['callback'] (_istance['name'], pdf.iloc [inf : sup ]) 
+                    except KeyError as e:
+                        print('KEY ERROR : {}'.format(e))
+                        continue
+
+                    events.update(v)
+        return events
+
+
+    _attach_callback(compact) 
+
+    return _run_compact if compact else _run
+
+
+def load_active_indicators (conf):
+
+    with open(conf, "r") as _json:
+        ai = json.load(_json) # TBD : ai = check_integrity(ai)
+        return ai
+
+
+def build_columns (ai_compact, index='Date'):
+
+    columns = [index]
+
+    for _function, _istances in ai_compact.items():
+        if type(_istances) is list and _istances:
+            for _istance in _istances:
+                if type(_istance) is dict:
+                    if 'name' in _istance:
+                        columns.append(_istance['name'])
+                    else:
+                        print('warning : no name definend for function istance ==> discard')
+
+    return columns
+
+
+def eval_active_indicators (conf, compact=False, index='Date'):
+    ai      = {}
+    f_col   = []
+    with open(conf, "r") as _json:
+        ai = json.load(_json) # TBD : ai = check_integrity(ai)
+    if compact:
+        f_col= build_columns(ai)
+        #print('f_col : {}'.format(f_col))
+    else:
+        f_col= ['Date', *ai]
+    '''
+    print ('eval :')
+    print('ai : ' + str(ai))
+    print('f_col : ' + str(f_col))
+    '''
+    return ai, f_col
 
 
 def main():
 
+    compact=True
+    #compact=False
+
     print('............ pandas version is : ' + pd.__version__ )
+    print('compact = {}'.format(str(compact)))
 
-    with open("active_indicators.json", "r") as ai_json:
-        ai = json.load(ai_json)
-        # TBD : ai = check_integrity(ai)
 
-    pdf = pd.read_csv('/home/starq/REP/DATA/FINANCE/Quotazioni/test-ai.csv' \
-    #pdf = pd.read_csv('/home/starq/REP/DATA/FINANCE/Quotazioni/NVDA.csv' \
+    #pdf = pd.read_csv('/home/starq/REP/DATA/FINANCE/Quotazioni/test-ai.csv' \
+    pdf = pd.read_csv('/home/starq/REP/DATA/FINANCE/Quotazioni/NVDA.csv' \
                                  ,usecols=['Date','Open', 'High', 'Low', 'Close', 'Volume'] \
                                  ,dtype=dty,parse_dates=['Date'],infer_datetime_format=True \
                                  ,index_col='Date')
 
     #print(pdf.info(memory_usage='deep'))
-
     rows = 0
-    events_rows = OrderedDict() # ex dict()
-    
+    events_rows = OrderedDict() 
+
+
+    if compact:
+        conf = "ext_active_indicators.json"
+    else:
+        conf = "active_indicators.json"
+
+    ai, features_columns = eval_active_indicators (conf, compact)
+
+    #print('ai : \n{}'.format(ai))
+    print('features_columns : \n{}'.format(features_columns))
+
     start = time.clock()
-
-    '''
-    capital_size    = 10000
-    MAX_LOSS        = capital_size * .01    # 1%
-    TRADE_SIZE      = MAX_LOSS * 9 # (pl ratio)
-    print('MAX_LOSS : {}   TRADE_SIZE : {}'.format(str(MAX_LOSS), str(TRADE_SIZE)))
-    '''
-
-    features_columns = ['Date', *ai]
-    #print('features_columns is :\n{}'.format(features_columns))
 
     for datapoint in pdf.itertuples():
 
@@ -149,17 +218,19 @@ def main():
                 #print ('main loop : events passed to yeld : ' + str(events))
                 #print ('main loop : events_dict after calling yeld(events) : ' + str(events_dict))
 
-            for k, v in events_dict.items():
-                events_rows.setdefault(k, []).append(v)
         else:
-            run_step    = execution_pool(ai)  
+            if compact:
+                run_step = execution_pool(ai, True)  
+            else:
+                run_step = execution_pool(ai)  
+
             events      = run_step(pdf, datapoint.Index)
             events_dict = yeld_events_row(events, features_columns)
 
             #print('main loop : events_dict FIRST ROW is : ' + str(events_dict))
 
-            for k, v in events_dict.items():
-                events_rows.setdefault(k, []).append(v)
+        for k, v in events_dict.items():
+            events_rows.setdefault(k, []).append(v)
 
         rows += 1
 
@@ -175,7 +246,7 @@ def main():
     elapsed = (time.clock() - start)
     print ('elapsed time to merge dataframes : {}'.format(str(elapsed)))
 
-    #print(pdf.to_string())
+    print(pdf.to_string())
     #print(pdf.info(memory_usage='deep'))
 
     pdf.to_csv('stack_execution.csv')
